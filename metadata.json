@@ -1,0 +1,5 @@
+{
+  "name": "Optimile AMS - Foundation",
+  "description": "Phase 0 Foundation of the Optimile Auction Management System. Features a robust in-memory auction engine with strict state management, sniper protection, and audit logging.",
+  "requestFramePermissions": []
+}
