@@ -65,13 +65,20 @@ export function Dashboard() {
                   {new Date(auction.createdAt).toLocaleDateString()} {new Date(auction.createdAt).toLocaleTimeString()}
                 </td>
                 <td className="px-6 py-4 text-right">
-                  <Link 
-                    to={`/auction/${auction.id}`} 
-                    className="inline-flex items-center space-x-1 text-slate-500 hover:text-accent font-medium transition-colors"
-                  >
-                    <Eye size={16} />
-                    <span>View</span>
-                  </Link>
+                  <div className="inline-flex items-center space-x-3">
+                    <Link 
+                      to={`/auction/${auction.id}`} 
+                      className="inline-flex items-center space-x-1 text-slate-500 hover:text-accent font-medium transition-colors"
+                    >
+                      <Eye size={16} />
+                      <span>View</span>
+                    </Link>
+                    {auction.status === AuctionStatus.COMPLETED && (
+                      <Link to={`/admin/auction-results/${auction.id}`} className="text-blue-700 hover:underline font-medium">
+                        Results
+                      </Link>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}

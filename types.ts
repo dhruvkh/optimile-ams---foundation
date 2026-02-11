@@ -20,6 +20,7 @@ export enum AuctionStatus {
 export enum LaneStatus {
   PENDING = 'PENDING',
   RUNNING = 'RUNNING',
+  PAUSED = 'PAUSED',
   CLOSED = 'CLOSED',
   AWARDED = 'AWARDED',
 }
@@ -75,6 +76,17 @@ export enum ContractStatus {
   DRAFT = 'DRAFT',
   ACTIVE = 'ACTIVE',
   EXPIRED = 'EXPIRED',
+  TERMINATED = 'TERMINATED',
+  COMPLETED = 'COMPLETED',
+}
+
+export enum ContractSignatureStatus {
+  DRAFT = 'DRAFT',
+  SENT = 'SENT',
+  PARTIALLY_SIGNED = 'PARTIALLY_SIGNED',
+  FULLY_EXECUTED = 'FULLY_EXECUTED',
+  EXPIRED = 'EXPIRED',
+  VOIDED = 'VOIDED',
 }
 
 export enum ContractPricingBasis {
@@ -92,6 +104,180 @@ export enum SpotAuctionStatus {
   RUNNING = 'RUNNING',
   COMPLETED = 'COMPLETED',
   CANCELLED = 'CANCELLED',
+}
+
+export enum DisputeRelatedType {
+  AUCTION = 'AUCTION',
+  CONTRACT = 'CONTRACT',
+  INVOICE = 'INVOICE',
+  GENERAL = 'GENERAL',
+}
+
+export enum DisputeCategory {
+  BIDDING_PROCESS = 'BIDDING_PROCESS',
+  AWARD_DECISION = 'AWARD_DECISION',
+  CONTRACT_TERMS = 'CONTRACT_TERMS',
+  SERVICE_QUALITY = 'SERVICE_QUALITY',
+  PAYMENT = 'PAYMENT',
+  FORCE_MAJEURE = 'FORCE_MAJEURE',
+  OTHER = 'OTHER',
+}
+
+export enum DisputePriority {
+  CRITICAL = 'CRITICAL',
+  HIGH = 'HIGH',
+  MEDIUM = 'MEDIUM',
+  LOW = 'LOW',
+}
+
+export enum DisputeStatus {
+  NEW = 'NEW',
+  UNDER_REVIEW = 'UNDER_REVIEW',
+  PENDING_RESPONSE = 'PENDING_RESPONSE',
+  RESOLVED = 'RESOLVED',
+  ESCALATED = 'ESCALATED',
+  CLOSED = 'CLOSED',
+}
+
+export enum AwardAcceptanceStatus {
+  PENDING = 'PENDING',
+  ACCEPTED = 'ACCEPTED',
+  DECLINED = 'DECLINED',
+  EXPIRED = 'EXPIRED',
+  REAWARDED = 'REAWARDED',
+  MODIFICATION_REQUESTED = 'MODIFICATION_REQUESTED',
+}
+
+export interface DisputeAttachment {
+  id: string;
+  name: string;
+  sizeKb: number;
+  uploadedAt: number;
+  uploadedBy: string;
+}
+
+export interface DisputeTimelineEvent {
+  id: string;
+  createdAt: number;
+  actorId: string;
+  action: string;
+  note?: string;
+}
+
+export interface DisputeMessage {
+  id: string;
+  senderId: string;
+  message: string;
+  createdAt: number;
+  visibility: 'all' | 'internal';
+}
+
+export interface DisputeAppeal {
+  id: string;
+  raisedAt: number;
+  raisedBy: string;
+  reason: string;
+  newEvidence?: string;
+  requestedOutcome: string;
+  status: 'PENDING' | 'RESOLVED' | 'REJECTED';
+  resolvedAt?: number;
+  decisionNote?: string;
+}
+
+export interface DisputeTicket {
+  id: string;
+  relatedType: DisputeRelatedType;
+  relatedId?: string;
+  auctionId?: string;
+  contractId?: string;
+  invoiceNumber?: string;
+  laneId?: string;
+  raisedBy: string;
+  raisedByRole: 'VENDOR' | 'ADMIN' | 'CLIENT';
+  category: DisputeCategory;
+  priority: DisputePriority;
+  description: string;
+  preferredResolution?: string;
+  attachments: DisputeAttachment[];
+  status: DisputeStatus;
+  assignedTo?: string;
+  dueAt: number;
+  createdAt: number;
+  updatedAt: number;
+  resolution?: {
+    proposedBy: string;
+    proposedAt: number;
+    resolutionType:
+      | 'AWARD_CHANGE'
+      | 'CONTRACT_ADJUSTMENT'
+      | 'REFUND_OR_WAIVER'
+      | 'RE_AUCTION'
+      | 'COMPENSATION'
+      | 'REJECTED_NO_ACTION';
+    details: string;
+    approvedBy?: string;
+    approvedAt?: number;
+    final: boolean;
+  };
+  timeline: DisputeTimelineEvent[];
+  messages: DisputeMessage[];
+  appeals: DisputeAppeal[];
+}
+
+export type AlternateThresholdType = 'percentage' | 'absolute';
+
+export interface AlternateQueueThreshold {
+  type: AlternateThresholdType;
+  value: number;
+  calculatedMaxBid: number;
+}
+
+export type AlternateQueueEntryStatus =
+  | 'AWARDED'
+  | 'ACCEPTED'
+  | 'DECLINED'
+  | 'EXPIRED'
+  | 'REAWARDED'
+  | 'STANDBY'
+  | 'OUT_OF_THRESHOLD'
+  | 'SKIPPED'
+  | 'CRITICAL_NO_WINNER';
+
+export interface AlternateQueueEntry {
+  rank: number;
+  vendorId: string;
+  vendorName: string;
+  bidAmount: number;
+  status: AlternateQueueEntryStatus;
+  awardedAt?: number;
+  acceptanceDeadline?: number;
+  priceDifference: number;
+  percentageDifference: number;
+  withinThreshold: boolean;
+  eligibleForAutoAward: boolean;
+  reason?: string;
+  notifications: Array<{
+    channel: 'EMAIL' | 'SMS' | 'WHATSAPP' | 'IN_APP';
+    message: string;
+    sentAt: number;
+  }>;
+}
+
+export interface LaneAlternateQueue {
+  laneId: string;
+  auctionId: string;
+  laneName: string;
+  winnerBid: number;
+  acceptanceThreshold: AlternateQueueThreshold;
+  queue: AlternateQueueEntry[];
+  queueStatus: 'ACTIVE' | 'REASSIGNED' | 'COMPLETED' | 'FAILED';
+  declineHistory: Array<{
+    vendorId: string;
+    reason: string;
+    at: number;
+  }>;
+  failedAt?: number;
+  failureReason?: string;
 }
 
 // --- Domain Models ---
@@ -199,6 +385,7 @@ export interface VendorQuote {
 }
 
 export interface Award {
+  id: string;
   auctionLaneId: string;
   vendorId: string;
   price: number;
@@ -206,6 +393,25 @@ export interface Award {
   reason?: string;
   awardedAt: number;
   awardedBy: string;
+  status: AwardAcceptanceStatus;
+  acceptanceDeadline: number;
+  acceptedAt?: number;
+  declinedAt?: number;
+  declineReason?: string;
+  modificationRequest?: {
+    requestedAt: number;
+    requestedBy: string;
+    category: 'PRICE' | 'TAT' | 'SPECIAL_CONDITIONS' | 'PAYMENT_TERMS' | 'OTHER';
+    justification: string;
+    proposedChanges: string;
+  };
+  reawardedFromAwardId?: string;
+  reawardedToAwardId?: string;
+  notificationLog: Array<{
+    channel: 'EMAIL' | 'SMS' | 'WHATSAPP' | 'IN_APP';
+    message: string;
+    sentAt: number;
+  }>;
 }
 
 // --- Phase 2A: Contracts ---
@@ -217,7 +423,15 @@ export interface TransportContract {
   startDate: string; // ISO Date
   endDate: string; // ISO Date
   status: ContractStatus;
+  signatureStatus?: ContractSignatureStatus;
   createdFromAuctionId: string;
+  vendorId?: string;
+  title?: string;
+  totalContractValue?: number;
+  version?: number;
+  lastUpdatedAt?: number;
+  signedVendorAt?: number;
+  signedClientAt?: number;
   createdAt: number;
 }
 

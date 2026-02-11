@@ -1,14 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { auctionEngine } from '../services/mockBackend';
-import { Auction, AuctionLane, AuctionStatus, LaneStatus, AuctionRuleset } from '../types';
-import { Play, Pause, ExternalLink, Activity, Award } from 'lucide-react';
+import { Auction, AuctionLane, AuctionStatus, LaneStatus, AuctionRuleset, CreateAuctionRequest } from '../types';
+import { Play, ExternalLink, Activity, Award } from 'lucide-react';
+import { BulkLaneUploadModal } from './BulkLaneUploadModal';
+import { useToast } from './common';
 
 export function AuctionDetail() {
   const { id } = useParams<{ id: string }>();
+  const { showToast } = useToast();
   const [auction, setAuction] = useState<Auction | undefined>();
   const [lanes, setLanes] = useState<AuctionLane[]>([]);
   const [ruleset, setRuleset] = useState<AuctionRuleset | undefined>();
+  const [showBulkUpload, setShowBulkUpload] = useState(false);
 
   const fetch = () => {
     if (!id) return;
@@ -34,7 +38,27 @@ export function AuctionDetail() {
     } catch(e) { alert((e as Error).message); }
   };
 
+  const handleImportMoreLanes = (importedLanes: CreateAuctionRequest['lanes']) => {
+    if (!id) return;
+    try {
+      auctionEngine.addLanesToAuction(id, importedLanes, 'ADMIN-USER');
+      showToast({
+        type: 'success',
+        title: 'Lanes imported',
+        message: `${importedLanes.length} lanes added to ${auction.name}`,
+      });
+      setShowBulkUpload(false);
+    } catch (error) {
+      showToast({
+        type: 'error',
+        title: 'Import failed',
+        message: (error as Error).message,
+      });
+    }
+  };
+
   return (
+    <>
     <div>
       {/* Header */}
       <div className="bg-white border border-slate-200 rounded-lg p-6 mb-6 flex justify-between items-start shadow-sm">
@@ -50,6 +74,9 @@ export function AuctionDetail() {
                 </div>
             </div>
             <div className="space-x-2 flex">
+                <button onClick={() => setShowBulkUpload(true)} className="bg-blue-600 text-white px-4 py-2 rounded flex items-center space-x-2 hover:bg-blue-700">
+                    <span>📤</span> <span>Import More Lanes</span>
+                </button>
                 {auction.status === AuctionStatus.DRAFT && (
                     <button onClick={handlePublish} className="bg-success text-white px-6 py-2 rounded font-bold hover:bg-emerald-600 shadow-lg shadow-success/20 transition-all">
                         Publish Auction
@@ -119,6 +146,15 @@ export function AuctionDetail() {
 
       </div>
     </div>
+
+    <BulkLaneUploadModal
+      isOpen={showBulkUpload}
+      onClose={() => setShowBulkUpload(false)}
+      onImport={handleImportMoreLanes}
+      existingLaneNames={lanes.map((l) => l.laneName)}
+      title="Import More Lanes"
+    />
+    </>
   );
 }
 

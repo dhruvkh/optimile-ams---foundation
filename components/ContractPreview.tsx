@@ -5,15 +5,16 @@ import { TransportContract, ContractLane, ContractVendorAllocation } from '../ty
 import { Save, CheckCircle, Plus, Trash2, ArrowLeft } from 'lucide-react';
 
 export function ContractPreview() {
-    const { id } = useParams<{id: string}>();
+    const { id, contractId } = useParams<{id?: string; contractId?: string}>();
+    const resolvedId = id || contractId;
     const navigate = useNavigate();
     const [contract, setContract] = useState<TransportContract | undefined>();
     const [lanes, setLanes] = useState<ContractLane[]>([]);
     
     const fetch = () => {
-        if(id) {
-            setContract(auctionEngine.getContract(id));
-            setLanes(auctionEngine.getContractLanes(id));
+        if(resolvedId) {
+            setContract(auctionEngine.getContract(resolvedId));
+            setLanes(auctionEngine.getContractLanes(resolvedId));
         }
     };
 
@@ -22,12 +23,12 @@ export function ContractPreview() {
         // Subscribe not strictly necessary for draft mode unless multiplayer, but good practice
         const unsub = auctionEngine.subscribe(fetch);
         return unsub;
-    }, [id]);
+    }, [resolvedId]);
 
     const activate = () => {
-        if(id && confirm("Are you sure? This will lock the contract and allocations.")) {
+        if(resolvedId && confirm("Are you sure? This will lock the contract and allocations.")) {
             try {
-                auctionEngine.activateContract(id, 'CLIENT-USER');
+                auctionEngine.activateContract(resolvedId, 'CLIENT-USER');
                 navigate('/contracts'); // Go to list
             } catch(e) {
                 alert((e as Error).message);

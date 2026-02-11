@@ -22,6 +22,8 @@ import {
 import { generateAuctionNameFromTemplate } from '../services/templateUtils';
 import { AuctionPreview } from './AuctionPreview';
 import { useToast } from './common';
+import { BulkLaneUploadModal } from './BulkLaneUploadModal';
+import { BULK_LANE_DRAFT_STORAGE_KEY } from './BulkLaneUploadPage';
 
 export function CreateAuction() {
   const navigate = useNavigate();
@@ -56,6 +58,7 @@ export function CreateAuction() {
 
   // Preview state
   const [showPreview, setShowPreview] = useState(false);
+  const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [usingTemplate, setUsingTemplate] = useState<{ id: string; name: string } | null>(null);
 
   const [draftId, setDraftId] = useState<string | null>(draftIdFromUrl);
@@ -68,6 +71,31 @@ export function CreateAuction() {
   );
 
   useEffect(() => {
+    const rawBulkDraft = localStorage.getItem(BULK_LANE_DRAFT_STORAGE_KEY);
+    if (!draftIdFromUrl && !templateIdFromUrl && rawBulkDraft) {
+      try {
+        const parsed = JSON.parse(rawBulkDraft) as { lanes: CreateAuctionRequest['lanes'] };
+        if (parsed.lanes?.length) {
+          setFormData((prev) => ({
+            ...prev,
+            lanes: parsed.lanes.map((lane, idx) => ({
+              ...lane,
+              sequenceOrder: idx + 1,
+            })),
+          }));
+          showToast({
+            type: 'success',
+            title: 'Bulk upload draft loaded',
+            message: `${parsed.lanes.length} lanes loaded from standalone bulk upload.`,
+          });
+        }
+      } catch {
+        // no-op
+      } finally {
+        localStorage.removeItem(BULK_LANE_DRAFT_STORAGE_KEY);
+      }
+    }
+
     // Handle template loading
     if (templateIdFromUrl) {
       const template = auctionEngine.getTemplate(templateIdFromUrl);
@@ -133,6 +161,20 @@ export function CreateAuction() {
         },
       ],
     });
+  };
+
+  const handleBulkImport = (lanes: CreateAuctionRequest['lanes']) => {
+    setFormData((prev) => ({
+      ...prev,
+      lanes: [
+        ...prev.lanes,
+        ...lanes.map((lane, idx) => ({
+          ...lane,
+          sequenceOrder: prev.lanes.length + idx + 1,
+        })),
+      ],
+    }));
+    setShowBulkUpload(false);
   };
 
   const removeLane = (index: number) => {
@@ -491,13 +533,22 @@ export function CreateAuction() {
             <h2 className="text-lg font-semibold">
               Lanes ({formData.lanes.length})
             </h2>
-            <button
-              type="button"
-              onClick={addLane}
-              className="text-accent text-sm font-medium hover:underline flex items-center"
-            >
-              <Plus size={16} className="mr-1" /> Add Lane
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setShowBulkUpload(true)}
+                className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 flex items-center"
+              >
+                📤 Bulk Upload Lanes
+              </button>
+              <button
+                type="button"
+                onClick={addLane}
+                className="text-accent text-sm font-medium hover:underline flex items-center"
+              >
+                <Plus size={16} className="mr-1" /> Add Lane
+              </button>
+            </div>
           </div>
 
           <div className="space-y-4">
@@ -669,6 +720,14 @@ export function CreateAuction() {
             isModal={true}
           />
         )}
+
+        <BulkLaneUploadModal
+          isOpen={showBulkUpload}
+          onClose={() => setShowBulkUpload(false)}
+          onImport={handleBulkImport}
+          existingLaneNames={formData.lanes.map((l) => l.laneName)}
+          title="Bulk Upload Lanes"
+        />
       </form>
     </div>
   );

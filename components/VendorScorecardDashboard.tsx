@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { TrendingUp, TrendingDown, Award, AlertCircle } from 'lucide-react';
+import { dataMigrationService } from '../services/dataMigration';
 
 interface VendorScorecard {
   vendorId: string;
@@ -22,6 +23,47 @@ interface VendorScorecard {
 
 // Mock data generator
 function generateMockScorecards(): VendorScorecard[] {
+  const historical = dataMigrationService.getHistoricalPerformance();
+  if (historical.length > 0) {
+    const grouped = new Map<string, typeof historical>();
+    historical.forEach((r) => {
+      const k = r.vendorIdOrName;
+      const arr = grouped.get(k) || [];
+      arr.push(r);
+      grouped.set(k, arr);
+    });
+    return Array.from(grouped.entries()).map(([vendorKey, rows], idx) => {
+      const avg = (selector: (row: typeof rows[number]) => number) => rows.reduce((a, r) => a + selector(r), 0) / Math.max(1, rows.length);
+      const score = avg((r) => r.performanceScore);
+      const winRate = avg((r) => r.winRate);
+      const otp = avg((r) => r.onTimeDeliveryPct);
+      const acceptance = avg((r) => r.reliabilityRating);
+      const completion = Math.min(100, avg((r) => (r.auctionsParticipated > 0 ? (r.lanesWon / r.auctionsParticipated) * 100 : 0)));
+      const rateAdherence = Math.max(0, 100 - avg((r) => r.avgDiscountGiven));
+      const communication = Math.max(40, score - 10);
+      const claims = avg((r) => r.issuesCount * 6);
+      const trendDelta = rows.length > 1 ? (rows[rows.length - 1].performanceScore - rows[0].performanceScore) : 0;
+      return {
+        vendorId: `H-${String(idx + 1).padStart(3, '0')}`,
+        vendorName: vendorKey,
+        grade: score >= 95 ? 'A+' : score >= 85 ? 'A' : score >= 75 ? 'B+' : score >= 65 ? 'B' : 'C',
+        score: Math.round(score * 10) / 10,
+        metrics: {
+          otp,
+          acceptanceRate: acceptance,
+          completionRate: completion,
+          rateAdherence,
+          communication,
+          claims,
+        },
+        trend: trendDelta > 2 ? 'IMPROVING' : trendDelta < -2 ? 'DECLINING' : 'STABLE',
+        changePercent: trendDelta,
+        auctionsWon: Math.round(avg((r) => r.lanesWon)),
+        totalAuctions: Math.round(avg((r) => r.auctionsParticipated)),
+      };
+    });
+  }
+
   const vendors = [
     'Swift Logistics',
     'Elite Transport',
@@ -58,6 +100,7 @@ export function VendorScorecardDashboard() {
   const [scorecards, setScorecards] = useState<VendorScorecard[]>([]);
   const [selectedVendor, setSelectedVendor] = useState<VendorScorecard | null>(null);
   const [sortBy, setSortBy] = useState<'score' | 'name' | 'trend'>('score');
+  const historicalCount = dataMigrationService.getHistoricalPerformance().length;
 
   useEffect(() => {
     const data = generateMockScorecards();
@@ -81,6 +124,11 @@ export function VendorScorecardDashboard() {
       <div>
         <h1 className="text-3xl font-bold text-slate-900">Vendor Performance Scorecard</h1>
         <p className="text-slate-500 mt-1">Monitor and compare vendor performance metrics</p>
+        {historicalCount > 0 ? (
+          <div className="mt-2 inline-flex px-2 py-1 rounded text-xs bg-blue-100 text-blue-700">
+            {historicalCount} historical performance records loaded
+          </div>
+        ) : null}
       </div>
 
       {/* Main Grid */}
