@@ -25,7 +25,11 @@ import { SpotPlacement } from './components/SpotPlacement';
 import { ToastProvider } from './components/common';
 import { ExecutiveDashboard } from './components/ExecutiveDashboard';
 import { VendorScorecardDashboard } from './components/VendorScorecardDashboard';
-import { AlertTriangle, Box, Gavel, History, LayoutDashboard, Truck, Briefcase, Users, FileText, Network, PlayCircle, Timer, Siren, Zap, BarChart3, TrendingUp } from 'lucide-react';
+import { AuctionDrafts } from './components/AuctionDrafts';
+import { AuctionPreview } from './components/AuctionPreview';
+import { AuctionTemplates } from './components/AuctionTemplates';
+import { TemplateDetails } from './components/TemplateDetails';
+import { AlertTriangle, Box, Gavel, History, LayoutDashboard, Truck, Briefcase, Users, FileText, Network, PlayCircle, Timer, Siren, Zap, BarChart3, TrendingUp, FileStack } from 'lucide-react';
 
 function Navigation() {
   const location = useLocation();
@@ -121,6 +125,14 @@ function Navigation() {
           <Box size={20} />
           <span>Create Auction</span>
         </Link>
+        <Link to="/admin/auction-drafts" className={getLinkClass('/admin/auction-drafts')}>
+          <FileStack size={20} />
+          <span>Drafts</span>
+        </Link>
+        <Link to="/admin/auction-templates" className={getLinkClass('/admin/auction-templates')}>
+          <Box size={20} />
+          <span>Templates</span>
+        </Link>
         <Link to="/audit" className={getLinkClass('/audit')}>
           <History size={20} />
           <span>Audit Log</span>
@@ -198,6 +210,17 @@ export default function App() {
           <Route path="/spot-monitor" element={<SpotMonitor />} />
           <Route path="/spot-console" element={<SpotVendorConsole />} />
           <Route path="/spot-placement" element={<SpotPlacement />} />
+          
+          {/* Draft Management Routes */}
+          <Route path="/admin/auction-drafts" element={<AuctionDrafts />} />
+          
+          {/* Template Management Routes */}
+          <Route path="/admin/auction-templates" element={<AuctionTemplates />} />
+          <Route path="/admin/auction-templates/:templateId" element={<TemplateDetails />} />
+          <Route path="/admin/auction-templates/:templateId/edit" element={<div>Template Editor - Coming Soon</div>} />
+          
+          {/* Auction Preview Route */}
+          <Route path="/admin/auction-preview" element={<div>Preview Page - Placeholder</div>} />
           
           {/* Dashboard Routes */}
           <Route path="/dashboard/executive" element={<ExecutiveDashboard />} />

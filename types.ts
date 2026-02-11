@@ -308,3 +308,177 @@ export interface CreateAuctionRequest {
   ruleset: Omit<AuctionRuleset, 'id'>;
   lanes: Omit<AuctionLane, 'id' | 'auctionId' | 'status' | 'currentLowestBid' | 'startTime' | 'endTime'>[];
 }
+
+// --- Draft Management ---
+
+export enum DraftStatus {
+  INCOMPLETE = 'INCOMPLETE',
+  READY = 'READY',
+}
+
+export interface AuctionDraft {
+  draftId: string;
+  auctionData: {
+    name: string;
+    auctionType: AuctionType;
+    globalRuleset: {
+      minBidDecrement: number;
+      timerExtensionThresholdSeconds: number;
+      timerExtensionSeconds: number;
+      allowRankVisibility: boolean;
+    };
+    lanes: Array<{
+      laneName: string;
+      basePrice: number;
+      duration: number;
+      decrement: number;
+      tatDays?: number;
+    }>;
+  };
+  createdBy: string;
+  createdAt: number;
+  lastModifiedAt: number;
+  status: DraftStatus;
+  expiresAt: number;
+}
+
+export interface SaveDraftRequest {
+  auctionData: AuctionDraft['auctionData'];
+  createdBy: string;
+}
+
+// --- Auction Preview ---
+
+export interface ValidationError {
+  field: string;
+  message: string;
+  severity: 'error' | 'warning';
+}
+
+export interface LanePreviewData {
+  laneName: string;
+  basePrice: number;
+  duration: number; // in seconds
+  decrement: number;
+  tatDays?: number;
+  minPossiblePrice: number;
+  estimatedSavings: number;
+}
+
+export interface AuctionPreviewData {
+  auctionName: string;
+  auctionType: AuctionType;
+  status: 'draft' | 'published';
+  globalRuleset: {
+    minBidDecrement: number;
+    timerExtensionThresholdSeconds: number;
+    timerExtensionSeconds: number;
+    allowRankVisibility: boolean;
+  };
+  lanes: LanePreviewData[];
+  validationErrors: ValidationError[];
+  totalBaseValue: number;
+  averageLaneDuration: number;
+  shortestLaneDuration: number;
+  longestLaneDuration: number;
+  estimatedCompletionTime: number; // in milliseconds
+  vendorEligibilityCount?: number;
+  estimatedParticipantCount: number;
+}
+
+export interface PreviewMode {
+  mode: 'create' | 'edit' | 'view';
+  viewAs: 'admin' | 'vendor';
+  deviceType: 'desktop' | 'tablet' | 'mobile';
+  draftId?: string;
+}
+
+// --- Auction Templates ---
+
+export enum TemplateVisibility {
+  PRIVATE = 'private',
+  TEAM = 'team',
+  ORGANIZATION = 'organization',
+}
+
+export enum TemplateCategory {
+  FTL = 'FTL',
+  LTL = 'LTL',
+  SPOT = 'Spot',
+  REGIONAL = 'Regional',
+  OTHER = 'Other',
+}
+
+export interface AuctionTemplate {
+  templateId: string;
+  templateName: string;
+  description?: string;
+  category: TemplateCategory;
+  isSystemTemplate: boolean;
+  visibility: TemplateVisibility;
+  isFavorite: boolean;
+  
+  // Template Configuration
+  auctionConfiguration: {
+    auctionType: AuctionType;
+    globalRuleset: {
+      minBidDecrement: number;
+      timerExtensionThresholdSeconds: number;
+      timerExtensionSeconds: number;
+      allowRankVisibility: boolean;
+    };
+    lanes: Array<{
+      laneName: string;
+      basePrice: number;
+      duration: number;
+      decrement: number;
+      tatDays?: number;
+    }>;
+  };
+  
+  // Metadata
+  createdBy: string;
+  createdAt: number;
+  lastModifiedAt: number;
+  lastModifiedBy?: string;
+  deletedAt?: number; // Soft delete
+  isDeleted?: boolean;
+  
+  // Usage Statistics
+  usageCount: number;
+  lastUsedAt?: number;
+  totalAuctionsCreated?: number;
+  averageSavingsPercent?: number;
+  mostUsedBy?: string; // User ID of person who used it most
+  mostUsedByCount?: number;
+}
+
+export interface CreateTemplateRequest {
+  templateName: string;
+  description?: string;
+  category: TemplateCategory;
+  visibility: TemplateVisibility;
+  isFavorite?: boolean;
+  auctionConfiguration: AuctionTemplate['auctionConfiguration'];
+  createdBy: string;
+}
+
+export interface UpdateTemplateRequest {
+  templateName?: string;
+  description?: string;
+  category?: TemplateCategory;
+  visibility?: TemplateVisibility;
+  isFavorite?: boolean;
+  auctionConfiguration?: AuctionTemplate['auctionConfiguration'];
+  lastModifiedBy: string;
+}
+
+export interface TemplateShareLink {
+  linkId: string;
+  templateId: string;
+  createdBy: string;
+  createdAt: number;
+  expiresAt?: number;
+  shareToken: string; // URL-safe token
+  importedBy: string[];
+}

@@ -30,6 +30,14 @@ import {
   SpotAuction,
   SpotBid,
   SpotAuctionStatus,
+  AuctionDraft,
+  DraftStatus,
+  SaveDraftRequest,
+  AuctionTemplate,
+  TemplateCategory,
+  TemplateVisibility,
+  CreateTemplateRequest,
+  UpdateTemplateRequest,
 } from '../types';
 
 /**
@@ -43,6 +51,12 @@ class AuctionEngine {
   private rulesets: Map<string, AuctionRuleset> = new Map();
   private bids: Map<string, Bid[]> = new Map(); // laneId -> Bids
   private auditLog: AuditEvent[] = []; 
+
+  // Draft Stores
+  private drafts: Map<string, AuctionDraft> = new Map();
+
+  // Template Stores
+  private templates: Map<string, AuctionTemplate> = new Map();
 
   // Phase 1 Stores
   private rfis: Map<string, RFI> = new Map();
@@ -88,6 +102,7 @@ class AuctionEngine {
       auctions: Array.from(this.auctions.values()),
       lanes: Array.from(this.lanes.values()),
       auditLog: [...this.auditLog].sort((a, b) => b.createdAt - a.createdAt),
+      drafts: Array.from(this.drafts.values()),
       // Phase 1 Snapshots
       rfis: Array.from(this.rfis.values()),
       rfqs: Array.from(this.rfqs.values()),
@@ -113,6 +128,17 @@ class AuctionEngine {
     return (this.bids.get(laneId) || []).sort((a, b) => a.bidAmount - b.bidAmount);
   }
   public getLane(laneId: string) { return this.lanes.get(laneId); }
+  
+  // Draft Getters
+  public getDraft(draftId: string) { return this.drafts.get(draftId); }
+  public getAllDrafts() { 
+    return Array.from(this.drafts.values()).sort((a, b) => b.lastModifiedAt - a.lastModifiedAt);
+  }
+  public getDraftsByUser(userId: string) {
+    return Array.from(this.drafts.values())
+      .filter(d => d.createdBy === userId)
+      .sort((a, b) => b.lastModifiedAt - a.lastModifiedAt);
+  }
   
   // Phase 1 Getters
   public getRFI(id: string) { return this.rfis.get(id); }
@@ -737,7 +763,267 @@ class AuctionEngine {
     this.notify();
   }
 
+  // --- Draft Management ---
+
+  private generateDraftId(): string {
+    const now = new Date();
+    const date = now.toISOString().split('T')[0].replace(/-/g, '');
+    const random = Math.floor(Math.random() * 100000).toString().padStart(5, '0');
+    return `DRAFT-${date}-${random}`;
+  }
+
+  public saveDraft(req: SaveDraftRequest): string {
+    const draftId = this.generateDraftId();
+    const now = Date.now();
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+
+    const draft: AuctionDraft = {
+      draftId,
+      auctionData: req.auctionData,
+      createdBy: req.createdBy,
+      createdAt: now,
+      lastModifiedAt: now,
+      status: DraftStatus.INCOMPLETE,
+      expiresAt: now + thirtyDaysMs,
+    };
+
+    this.drafts.set(draftId, draft);
+    this.notify();
+    return draftId;
+  }
+
+  public updateDraft(draftId: string, auctionData: AuctionDraft['auctionData']): void {
+    const draft = this.drafts.get(draftId);
+    if (!draft) throw new Error('Draft not found');
+
+    draft.auctionData = auctionData;
+    draft.lastModifiedAt = Date.now();
+
+    // Update status based on completeness
+    const isReady = auctionData.name.trim().length > 0 && auctionData.lanes.length > 0;
+    draft.status = isReady ? DraftStatus.READY : DraftStatus.INCOMPLETE;
+
+    this.drafts.set(draftId, draft);
+    this.notify();
+  }
+
+  public deleteDraft(draftId: string): void {
+    if (!this.drafts.has(draftId)) throw new Error('Draft not found');
+    this.drafts.delete(draftId);
+    this.notify();
+  }
+
+  public duplicateDraft(draftId: string): string {
+    const original = this.drafts.get(draftId);
+    if (!original) throw new Error('Draft not found');
+
+    const newDraftId = this.generateDraftId();
+    const now = Date.now();
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+
+    const newDraft: AuctionDraft = {
+      draftId: newDraftId,
+      auctionData: JSON.parse(JSON.stringify(original.auctionData)), // Deep copy
+      createdBy: original.createdBy,
+      createdAt: now,
+      lastModifiedAt: now,
+      status: original.status,
+      expiresAt: now + thirtyDaysMs,
+    };
+
+    this.drafts.set(newDraftId, newDraft);
+    this.notify();
+    return newDraftId;
+  }
+
+  public publishDraft(draftId: string, userId: string): string {
+    const draft = this.drafts.get(draftId);
+    if (!draft) throw new Error('Draft not found');
+
+    // Create auction from draft
+    const createAuctionReq: CreateAuctionRequest = {
+      name: draft.auctionData.name,
+      auctionType: draft.auctionData.auctionType,
+      clientId: 'CLIENT-001', // Default
+      createdBy: userId,
+      ruleset: draft.auctionData.globalRuleset,
+      lanes: draft.auctionData.lanes.map(l => ({
+        laneName: l.laneName,
+        sequenceOrder: draft.auctionData.lanes.indexOf(l) + 1,
+        basePrice: l.basePrice,
+        minBidDecrement: l.decrement,
+        timerDurationSeconds: l.duration,
+        tatDays: l.tatDays,
+      })),
+    };
+
+    // Create the auction using existing createAuction method
+    const auctionId = this.createAuction(createAuctionReq);
+
+    // Delete the draft
+    this.drafts.delete(draftId);
+    this.notify();
+
+    return auctionId;
+  }
+
+  // --- Template Management ---
+
+  public createTemplate(req: CreateTemplateRequest): string {
+    const templateId = this.generateTemplateId();
+    const now = Date.now();
+
+    const template: AuctionTemplate = {
+      templateId,
+      templateName: req.templateName,
+      description: req.description,
+      category: req.category,
+      isSystemTemplate: false,
+      visibility: req.visibility,
+      isFavorite: req.isFavorite || false,
+      auctionConfiguration: req.auctionConfiguration,
+      createdBy: req.createdBy,
+      createdAt: now,
+      lastModifiedAt: now,
+      usageCount: 0,
+      totalAuctionsCreated: 0,
+    };
+
+    this.templates.set(templateId, template);
+    this.notify();
+    return templateId;
+  }
+
+  public getTemplate(templateId: string): AuctionTemplate | undefined {
+    return this.templates.get(templateId);
+  }
+
+  public getAllTemplates(): AuctionTemplate[] {
+    return Array.from(this.templates.values()).filter(t => !t.isDeleted);
+  }
+
+  public getTemplatesByUser(userId: string): AuctionTemplate[] {
+    return Array.from(this.templates.values()).filter(
+      t => !t.isDeleted && t.createdBy === userId
+    );
+  }
+
+  public updateTemplate(templateId: string, req: UpdateTemplateRequest): void {
+    const template = this.templates.get(templateId);
+    if (!template) throw new Error('Template not found');
+    if (template.isSystemTemplate) throw new Error('Cannot modify system templates');
+
+    if (req.templateName) template.templateName = req.templateName;
+    if (req.description !== undefined) template.description = req.description;
+    if (req.category) template.category = req.category;
+    if (req.visibility) template.visibility = req.visibility;
+    if (req.isFavorite !== undefined) template.isFavorite = req.isFavorite;
+    if (req.auctionConfiguration) template.auctionConfiguration = req.auctionConfiguration;
+
+    template.lastModifiedAt = Date.now();
+    template.lastModifiedBy = req.lastModifiedBy;
+
+    this.templates.set(templateId, template);
+    this.notify();
+  }
+
+  public deleteTemplate(templateId: string): void {
+    const template = this.templates.get(templateId);
+    if (!template) throw new Error('Template not found');
+    if (template.isSystemTemplate) throw new Error('Cannot delete system templates');
+
+    // Soft delete
+    template.isDeleted = true;
+    template.deletedAt = Date.now();
+
+    this.templates.set(templateId, template);
+    this.notify();
+  }
+
+  public duplicateTemplate(templateId: string, userId: string): string {
+    const original = this.templates.get(templateId);
+    if (!original) throw new Error('Template not found');
+
+    const newTemplateId = this.generateTemplateId();
+    const now = Date.now();
+
+    const newTemplate: AuctionTemplate = {
+      templateId: newTemplateId,
+      templateName: `${original.templateName} - Copy`,
+      description: original.description,
+      category: original.category,
+      isSystemTemplate: false,
+      visibility: original.visibility,
+      isFavorite: false,
+      auctionConfiguration: JSON.parse(JSON.stringify(original.auctionConfiguration)), // Deep copy
+      createdBy: userId,
+      createdAt: now,
+      lastModifiedAt: now,
+      lastModifiedBy: userId,
+      usageCount: 0,
+      totalAuctionsCreated: 0,
+    };
+
+    this.templates.set(newTemplateId, newTemplate);
+    this.notify();
+    return newTemplateId;
+  }
+
+  public toggleFavorite(templateId: string): void {
+    const template = this.templates.get(templateId);
+    if (!template) throw new Error('Template not found');
+
+    template.isFavorite = !template.isFavorite;
+    template.lastModifiedAt = Date.now();
+
+    this.templates.set(templateId, template);
+    this.notify();
+  }
+
+  public recordTemplateUsage(templateId: string, userId: string): void {
+    const template = this.templates.get(templateId);
+    if (!template) throw new Error('Template not found');
+
+    template.usageCount = (template.usageCount || 0) + 1;
+    template.lastUsedAt = Date.now();
+    template.totalAuctionsCreated = (template.totalAuctionsCreated || 0) + 1;
+
+    // Track most used by
+    if (!template.mostUsedBy || template.mostUsedBy === userId) {
+      template.mostUsedBy = userId;
+      template.mostUsedByCount = (template.mostUsedByCount || 0) + 1;
+    }
+
+    this.templates.set(templateId, template);
+    this.notify();
+  }
+
+  private generateTemplateId(): string {
+    const timestamp = new Date().toISOString().split('T')[0].replace(/-/g, '');
+    const random = Math.floor(Math.random() * 100000).toString().padStart(5, '0');
+    return `TMPL-${timestamp}-${random}`;
+  }
+
+  private cleanupExpiredDrafts(): void {
+    const now = Date.now();
+    const expiredDrafts: string[] = [];
+
+    for (const [draftId, draft] of this.drafts.entries()) {
+      if (now > draft.expiresAt) {
+        expiredDrafts.push(draftId);
+      }
+    }
+
+    expiredDrafts.forEach(draftId => this.drafts.delete(draftId));
+
+    if (expiredDrafts.length > 0) {
+      console.log(`Cleaned up ${expiredDrafts.length} expired drafts`);
+      this.notify();
+    }
+  }
+
   private tick() {
+    this.cleanupExpiredDrafts();
     const now = Date.now();
     let changed = false;
 
@@ -841,7 +1127,240 @@ class AuctionEngine {
   private notify() { this.subscribers.forEach(cb => cb()); }
 
   private seedData() { 
-      // Optional: seed generic rules
+    this.initializeSystemTemplates();
+  }
+
+  private initializeSystemTemplates(): void {
+    const now = Date.now();
+    const systemTemplates: AuctionTemplate[] = [
+      {
+        templateId: 'TMPL-SYS-001',
+        templateName: 'Regional FTL - North India',
+        description: 'Full Truckload auctions optimized for North India routes with standard FTL settings',
+        category: TemplateCategory.FTL,
+        isSystemTemplate: true,
+        visibility: TemplateVisibility.ORGANIZATION,
+        isFavorite: false,
+        auctionConfiguration: {
+          auctionType: AuctionType.REVERSE,
+          globalRuleset: {
+            minBidDecrement: 500,
+            timerExtensionThresholdSeconds: 15,
+            timerExtensionSeconds: 180,
+            allowRankVisibility: true,
+          },
+          lanes: [
+            { laneName: 'Delhi-Mumbai', basePrice: 85000, duration: 600, decrement: 1000, tatDays: 4 },
+            { laneName: 'Delhi-Jaipur', basePrice: 15000, duration: 300, decrement: 300, tatDays: 1 },
+            { laneName: 'Delhi-Chandigarh', basePrice: 8000, duration: 180, decrement: 200, tatDays: 1 },
+            { laneName: 'Delhi-Lucknow', basePrice: 25000, duration: 300, decrement: 500, tatDays: 2 },
+            { laneName: 'Delhi-Kolkata', basePrice: 95000, duration: 900, decrement: 1200, tatDays: 5 },
+          ],
+        },
+        createdBy: 'SYSTEM',
+        createdAt: now,
+        lastModifiedAt: now,
+        usageCount: 0,
+      },
+      {
+        templateId: 'TMPL-SYS-002',
+        templateName: 'Last Mile Delivery - Metro Cities',
+        description: 'LOT auctions for last-mile delivery with shorter durations and aggressive decrements',
+        category: TemplateCategory.LTL,
+        isSystemTemplate: true,
+        visibility: TemplateVisibility.ORGANIZATION,
+        isFavorite: false,
+        auctionConfiguration: {
+          auctionType: AuctionType.LOT,
+          globalRuleset: {
+            minBidDecrement: 50,
+            timerExtensionThresholdSeconds: 8,
+            timerExtensionSeconds: 60,
+            allowRankVisibility: false,
+          },
+          lanes: [
+            { laneName: 'Mumbai Zone 1', basePrice: 5000, duration: 120, decrement: 100, tatDays: 0 },
+            { laneName: 'Mumbai Zone 2', basePrice: 4500, duration: 120, decrement: 100, tatDays: 0 },
+            { laneName: 'Delhi Zone 1', basePrice: 4000, duration: 120, decrement: 80, tatDays: 0 },
+            { laneName: 'Bangalore Zone 1', basePrice: 3500, duration: 120, decrement: 70, tatDays: 0 },
+            { laneName: 'Hyderabad Zone 1', basePrice: 3000, duration: 120, decrement: 60, tatDays: 0 },
+          ],
+        },
+        createdBy: 'SYSTEM',
+        createdAt: now,
+        lastModifiedAt: now,
+        usageCount: 0,
+      },
+      {
+        templateId: 'TMPL-SYS-003',
+        templateName: 'Spot Auction - Urgent Loads',
+        description: 'Quick SPOT auctions for urgent shipments with very short duration and high decrements',
+        category: TemplateCategory.SPOT,
+        isSystemTemplate: true,
+        visibility: TemplateVisibility.ORGANIZATION,
+        isFavorite: false,
+        auctionConfiguration: {
+          auctionType: AuctionType.SPOT,
+          globalRuleset: {
+            minBidDecrement: 1000,
+            timerExtensionThresholdSeconds: 5,
+            timerExtensionSeconds: 30,
+            allowRankVisibility: false,
+          },
+          lanes: [
+            { laneName: 'Urgent - Immediate', basePrice: 50000, duration: 180, decrement: 2000, tatDays: 0 },
+            { laneName: 'Urgent - 2 Hours', basePrice: 40000, duration: 240, decrement: 1500, tatDays: 0 },
+            { laneName: 'Urgent - 4 Hours', basePrice: 35000, duration: 300, decrement: 1000, tatDays: 0 },
+          ],
+        },
+        createdBy: 'SYSTEM',
+        createdAt: now,
+        lastModifiedAt: now,
+        usageCount: 0,
+      },
+      {
+        templateId: 'TMPL-SYS-004',
+        templateName: 'Quarterly Contract - Pan India',
+        description: 'BULK auctions for quarterly contracts with major Pan India lanes',
+        category: TemplateCategory.FTL,
+        isSystemTemplate: true,
+        visibility: TemplateVisibility.ORGANIZATION,
+        isFavorite: false,
+        auctionConfiguration: {
+          auctionType: AuctionType.BULK,
+          globalRuleset: {
+            minBidDecrement: 2000,
+            timerExtensionThresholdSeconds: 20,
+            timerExtensionSeconds: 300,
+            allowRankVisibility: true,
+          },
+          lanes: [
+            { laneName: 'Delhi-Mumbai', basePrice: 80000, duration: 1200, decrement: 1500, tatDays: 4 },
+            { laneName: 'Delhi-Bangalore', basePrice: 120000, duration: 1200, decrement: 2000, tatDays: 5 },
+            { laneName: 'Delhi-Chennai', basePrice: 150000, duration: 1200, decrement: 2500, tatDays: 6 },
+            { laneName: 'Delhi-Kolkata', basePrice: 90000, duration: 1200, decrement: 1500, tatDays: 5 },
+            { laneName: 'Chennai-Mumbai', basePrice: 95000, duration: 1200, decrement: 1500, tatDays: 4 },
+          ],
+        },
+        createdBy: 'SYSTEM',
+        createdAt: now,
+        lastModifiedAt: now,
+        usageCount: 0,
+      },
+      {
+        templateId: 'TMPL-SYS-005',
+        templateName: 'Regional LTL - West Zone',
+        description: 'Regional LTL routes in West India with multiple pickup/drop points',
+        category: TemplateCategory.REGIONAL,
+        isSystemTemplate: true,
+        visibility: TemplateVisibility.ORGANIZATION,
+        isFavorite: false,
+        auctionConfiguration: {
+          auctionType: AuctionType.REGION_LOT,
+          globalRuleset: {
+            minBidDecrement: 300,
+            timerExtensionThresholdSeconds: 12,
+            timerExtensionSeconds: 120,
+            allowRankVisibility: true,
+          },
+          lanes: [
+            { laneName: 'Ahmedabad-Indore', basePrice: 18000, duration: 300, decrement: 300, tatDays: 2 },
+            { laneName: 'Mumbai-Pune', basePrice: 12000, duration: 240, decrement: 250, tatDays: 1 },
+            { laneName: 'Surat-Vapi', basePrice: 8000, duration: 180, decrement: 150, tatDays: 1 },
+            { laneName: 'Rajkot-Ahmedabad', basePrice: 15000, duration: 240, decrement: 300, tatDays: 1 },
+          ],
+        },
+        createdBy: 'SYSTEM',
+        createdAt: now,
+        lastModifiedAt: now,
+        usageCount: 0,
+      },
+      {
+        templateId: 'TMPL-SYS-006',
+        templateName: 'High-Value Specialty - Express',
+        description: 'Reverse auction for high-value specialty goods with express delivery requirement',
+        category: TemplateCategory.FTL,
+        isSystemTemplate: true,
+        visibility: TemplateVisibility.ORGANIZATION,
+        isFavorite: false,
+        auctionConfiguration: {
+          auctionType: AuctionType.REVERSE,
+          globalRuleset: {
+            minBidDecrement: 3000,
+            timerExtensionThresholdSeconds: 15,
+            timerExtensionSeconds: 180,
+            allowRankVisibility: true,
+          },
+          lanes: [
+            { laneName: 'Mumbai-Delhi (Express)', basePrice: 200000, duration: 800, decrement: 5000, tatDays: 2 },
+            { laneName: 'Delhi-Bangalore (Express)', basePrice: 250000, duration: 800, decrement: 5000, tatDays: 2 },
+            { laneName: 'Chennai-Kolkata (Express)', basePrice: 280000, duration: 900, decrement: 6000, tatDays: 3 },
+          ],
+        },
+        createdBy: 'SYSTEM',
+        createdAt: now,
+        lastModifiedAt: now,
+        usageCount: 0,
+      },
+      {
+        templateId: 'TMPL-SYS-007',
+        templateName: 'Partial Load - Regional Network',
+        description: 'LOT auction for partial loads connecting regional hubs',
+        category: TemplateCategory.LTL,
+        isSystemTemplate: true,
+        visibility: TemplateVisibility.ORGANIZATION,
+        isFavorite: false,
+        auctionConfiguration: {
+          auctionType: AuctionType.LOT,
+          globalRuleset: {
+            minBidDecrement: 100,
+            timerExtensionThresholdSeconds: 8,
+            timerExtensionSeconds: 90,
+            allowRankVisibility: false,
+          },
+          lanes: [
+            { laneName: 'Hub-A to Hub-B', basePrice: 8000, duration: 180, decrement: 150, tatDays: 1 },
+            { laneName: 'Hub-B to Hub-C', basePrice: 7500, duration: 180, decrement: 150, tatDays: 1 },
+            { laneName: 'Hub-C to Hub-A', basePrice: 9000, duration: 180, decrement: 180, tatDays: 1 },
+            { laneName: 'Hub-A to Satellite', basePrice: 5000, duration: 120, decrement: 100, tatDays: 0 },
+          ],
+        },
+        createdBy: 'SYSTEM',
+        createdAt: now,
+        lastModifiedAt: now,
+        usageCount: 0,
+      },
+      {
+        templateId: 'TMPL-SYS-008',
+        templateName: 'Cold Chain Distribution',
+        description: 'Specialized REVERSE auction for temperature-controlled logistics',
+        category: TemplateCategory.FTL,
+        isSystemTemplate: true,
+        visibility: TemplateVisibility.ORGANIZATION,
+        isFavorite: false,
+        auctionConfiguration: {
+          auctionType: AuctionType.REVERSE,
+          globalRuleset: {
+            minBidDecrement: 1000,
+            timerExtensionThresholdSeconds: 10,
+            timerExtensionSeconds: 150,
+            allowRankVisibility: true,
+          },
+          lanes: [
+            { laneName: 'Delhi-Mumbai (Cold)', basePrice: 120000, duration: 900, decrement: 2000, tatDays: 2 },
+            { laneName: 'Mumbai-Bangalore (Cold)', basePrice: 95000, duration: 900, decrement: 1500, tatDays: 2 },
+          ],
+        },
+        createdBy: 'SYSTEM',
+        createdAt: now,
+        lastModifiedAt: now,
+        usageCount: 0,
+      },
+    ];
+
+    systemTemplates.forEach(template => {
+      this.templates.set(template.templateId, template);
+    });
   }
 }
 
